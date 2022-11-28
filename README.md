@@ -1,16 +1,18 @@
 # eZustellung
 
 [OSCI 1.2](https://www.xoev.de/osci-xta-3355)
-is a complex standard defining a safe way to exchange information (Zustellungen)
+is a complex standard defining a secure way to exchange information (Zustellungen)
 between institutions of the german government.
 I believe that a lot of the complexity in this standard is an accidental byproduct of
 tightly coupling the end-to-end features (encryption and signatures) with
-the communication protocol.
-This coupling also incurs heavy performance penalties, resulting in additional complexity
+the SOAP-based communication protocol.
+The specific details of this coupling also incur heavy performance penalties, resulting in additional complexity
 to correct for this effect when transmitting large files.
 By instead separating the end-to-end features into a transport-independent, efficient file format,
-the protocol can concentrate on simply exchanging opaque data.
-This project is an experimental effort to define a file format that fixes these issues.
+the protocol could concentrate on simply exchanging opaque data.
+On top, the transport mechanism and the file format could develop independently,
+allowing for greater flexibility in the future.
+This project is an experimental effort to define a suitable file format.
 
 ## Design Goals
 
@@ -20,19 +22,16 @@ Based on the specifications described in OSCI, a `eZustellung` must support the 
 - The content is fully encrypted.
   The encrypted content is distributed along with the encryption key in a way that only the intended
   receiver can decrypt the data.
-- The content is cryptographically signed by the sender to ensure that the data was not changed while being transmitted
-  from the sender to the receiver.
+- The content is cryptographically signed by the sender to ensure that the data was not changed while being transmitted.
 
-For the choice of the actual encryption, I currently tend towards selecting suitable algorithms
-supported by the [RustCrypto](https://github.com/RustCrypto) project, as those
-are a direct dependency of several projects supported by the
-[Sovereign Tech Fund](https://sovereigntechfund.de/index.html).
+In addition to these requirements derived from the OSCI standard, the format should also have the following properties:
 
-In addition, the format should also have the following properties:
-
-- **space-efficient**: The file format should be able to efficiently pack arbitrary binary data without inflating the provided content.
-- **stream-oriented**: The format should allow packing the data without the need to have all of the content in memory at once. Instead it should be possible to create the file on the fly while writing it to the filesystem/a socket. This would allow efficient processing of arbitrarily large files.
+- **space-efficient**: The file format should be able to efficiently pack arbitrary binary data without inflating the provided content, i.e. no base64 encoding of the binary content.
+- **stream-oriented**: The format should allow packing the data without the need to have all of the content in memory at once.
+  Instead, it should be possible to create the file on the fly while writing it to the target (filesystem, network, ...).
+  This would allow efficient processing of arbitrarily large files with minimal memory requirements.
 - **seekable**: The structure of the format allows to easily jump within a large `eZustellung`-file to the different data blocks.
+- **easy to use**: It should be possible to create an intuitive interface to interact with the format.
 
 ## Format
 
@@ -68,7 +67,7 @@ In addition, the format should also have the following properties:
 ```
 
 The symmetric encryption key is asymmetrically encrypted first using the private key
-corresponding to the sender certificate, and than by the public key
+corresponding to the sender certificate, and then by the public key
 from the receiver certificate.
 This way, only the receiver can decode the key and the origin of the
 encrypted content must be the owner of the sender certificate.
@@ -109,9 +108,51 @@ signature block is identified by a fixed 8 bytes 0:
 ```
          Start
 +-+-+-+-+-+-+-+-+-+-+-+
-|         0           | 8 bytes
+|          0          | 8 bytes
 +-+-+-+-+-+-+-+-+-+-+-+
 |      Signature      | 32 bytes
 +-+-+-+-+-+-+-+-+-+-+-+
           End
+```
+
+## Implementation Goals
+
+A possible interface in Python could look like this:
+
+```python
+import eZustellung
+
+# Somehow create a writable target for the data (file, byte array, socket, ...)
+target = create_target()
+
+sender_cert = load_certificate("...")
+sender_key = load_private_key("...")
+receiver_cert = load_certificate("...")
+
+with eZustellung.Writer(target, sender_cert, sender_key, receiver_cert) as writer:
+  # At this point, the certificates and the symmetric key have already been written
+  # to the target. The file is now ready to write the different blocks of data,
+  # which are encrypted automatically.
+
+  writer.add_file(
+    "./path/to/payload.json",
+    identifier="payload_1.json",
+  )
+
+  writer.add_bytes(
+    b'{"value": 1}',
+    identifier="payload_2.json",
+  )
+
+  # In the OSCI standard, one discussed use case is to encrypt
+  # the content so that it can only be read by combining multiple certificates.
+  # This can be achieved by wrapping another eZustellung internally as a data block.
+  inner_receiver_cert = load_certificate("...")
+  with writer.create_inner_writer(inner_receiver_cert, identifier="internal") as inner_writer:
+    inner_writer.add_bytes(
+      b'{"value": 2}',
+      identifier="payload_3.json"
+    )
+
+  # After leaving the context the signature block is created, marking the end of the file.
 ```
