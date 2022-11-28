@@ -33,6 +33,48 @@ In addition to these requirements derived from the OSCI standard, the format sho
 - **seekable**: The structure of the format allows to easily jump within a large `eZustellung`-file to the different data blocks.
 - **easy to use**: It should be possible to create an intuitive interface to interact with the format.
 
+## Implementation Goals
+
+A possible interface in Python could look like this:
+
+```python
+import eZustellung
+
+# Somehow create a writable target for the data (file, byte array, socket, ...)
+target = create_target()
+
+sender_cert = load_certificate("...")
+sender_key = load_private_key("...")
+receiver_cert = load_certificate("...")
+
+with eZustellung.Writer(target, sender_cert, sender_key, receiver_cert) as writer:
+  # At this point, the certificates and the symmetric key have already been written
+  # to the target. The file is now ready to write the different blocks of data,
+  # which are encrypted automatically.
+
+  writer.add_file(
+    "./path/to/payload.json",
+    identifier="payload_1.json",
+  )
+
+  writer.add_bytes(
+    b'{"value": 1}',
+    identifier="payload_2.json",
+  )
+
+  # In the OSCI standard, one discussed use case is to encrypt
+  # the content so that it can only be read by combining multiple certificates.
+  # This can be achieved by wrapping another eZustellung internally as a data block.
+  inner_receiver_cert = load_certificate("...")
+  with writer.create_inner_writer(inner_receiver_cert, identifier="internal") as inner_writer:
+    inner_writer.add_bytes(
+      b'{"value": 2}',
+      identifier="payload_3.json"
+    )
+
+  # After leaving the context the signature block is created, marking the end of the file.
+```
+
 ## Format
 
 ```
@@ -113,46 +155,4 @@ signature block is identified by a fixed 8 bytes 0:
 |      Signature      | 32 bytes
 +-+-+-+-+-+-+-+-+-+-+-+
           End
-```
-
-## Implementation Goals
-
-A possible interface in Python could look like this:
-
-```python
-import eZustellung
-
-# Somehow create a writable target for the data (file, byte array, socket, ...)
-target = create_target()
-
-sender_cert = load_certificate("...")
-sender_key = load_private_key("...")
-receiver_cert = load_certificate("...")
-
-with eZustellung.Writer(target, sender_cert, sender_key, receiver_cert) as writer:
-  # At this point, the certificates and the symmetric key have already been written
-  # to the target. The file is now ready to write the different blocks of data,
-  # which are encrypted automatically.
-
-  writer.add_file(
-    "./path/to/payload.json",
-    identifier="payload_1.json",
-  )
-
-  writer.add_bytes(
-    b'{"value": 1}',
-    identifier="payload_2.json",
-  )
-
-  # In the OSCI standard, one discussed use case is to encrypt
-  # the content so that it can only be read by combining multiple certificates.
-  # This can be achieved by wrapping another eZustellung internally as a data block.
-  inner_receiver_cert = load_certificate("...")
-  with writer.create_inner_writer(inner_receiver_cert, identifier="internal") as inner_writer:
-    inner_writer.add_bytes(
-      b'{"value": 2}',
-      identifier="payload_3.json"
-    )
-
-  # After leaving the context the signature block is created, marking the end of the file.
 ```
